@@ -23,7 +23,7 @@ public class EsToLuceneTest {
             e.printStackTrace();
         }
     }
-
+    @Test
     public void rangeQuery() throws Exception {
         AbstractBuilderTestCase c = new AbstractBuilderTestCase();
         c.beforeTest();
