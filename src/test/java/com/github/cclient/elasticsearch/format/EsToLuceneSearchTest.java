@@ -1,7 +1,11 @@
 package com.github.cclient.elasticsearch.format;
 
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.queryparser.xml.builders.RangeQueryBuilder;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
 import org.apache.lucene.search.Query;
+import org.apache.lucene.search.TermRangeQuery;
 import org.apache.lucene.store.Directory;
 import org.junit.Test;
 
@@ -42,40 +46,22 @@ public class EsToLuceneSearchTest {
     public void filter() {
         createRAMIndex();
         System.out.println("directory: " + directory);
-        String withExistsAnalyzer = "{\n" +
-                "    \"query\": {\n" +
-                "        \"bool\": {\n" +
-                "            \"must\": [\n" +
-                "                {\n" +
-                "                    \"query_string\": {\n" +
-                "                        \"analyzer\": \"standard\",\n" +
-                "                        \"query\": \"(Git code guide) OR (repository branch)\",\n" +
-                "                        \"fields\": [\n" +
-                "                            \"text_body\"\n" +
-                "                        ]\n" +
-                "                    }\n" +
-                "                },\n" +
-                "                {\n" +
-                "                    \"range\": {\n" +
-                "                        \"long_view\": {\n" +
-                "                            \"gte\": \"0\",\n" +
-                "                            \"lte\": \"1000\"\n" +
-                "                        }\n" +
-                "                    }\n" +
-                "                }\n" +
-                "            ]\n" +
-                "        }\n" +
-                "    }\n" +
-                "}";
         try {
             EsToLucene esToLucene = new EsToLucene();
-            Query query = esToLucene.parseQueryToLuceneQuery(withExistsAnalyzer, Arrays.asList("text_body"), new StandardAnalyzer());
-            System.out.println("query: " + query.toString());
-            List<String> matchIds = EsToLuceneSearch.filter(directory, query, 100);
+            String elasticsearchQueryString = "(Git code guide) OR (repository branch)";
+            Query textQuery = esToLucene.parseQueryStringToLuceneQuery(elasticsearchQueryString, Arrays.asList("content"), new StandardAnalyzer());
+            Query rangeQuery=TermRangeQuery.newStringRange("long_view", "0", "1000", true, true);
+            BooleanQuery.BuildWer booleanQuery = new BooleanQuery.Builder();
+            booleanQuery.add(rangeQuery, BooleanClause.Occur.SHOULD);
+            booleanQuery.add(textQuery, BooleanClause.Occur.SHOULD);
+            Query compileQuery = booleanQuery.build();
+
+            System.out.println("query: " + compileQuery.toString());
+            List<String> matchIds = EsToLuceneSearch.filter(directory, compileQuery, 100);
             System.out.println("matchIds: " + matchIds);
-        } catch (Exception e) {
+
+    } catch (Exception e) {
             e.printStackTrace();
         }
-
     }
 }

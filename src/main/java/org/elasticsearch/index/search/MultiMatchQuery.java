@@ -29,7 +29,6 @@ import org.apache.lucene.search.MatchNoDocsQuery;
 import org.apache.lucene.search.Query;
 import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.util.BytesRef;
-import org.elasticsearch.ElasticsearchParseException;
 import org.elasticsearch.common.lucene.search.Queries;
 import org.elasticsearch.index.mapper.MappedFieldType;
 import org.elasticsearch.index.query.AbstractQueryBuilder;
@@ -43,6 +42,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+
+import static org.elasticsearch.common.lucene.search.Queries.newLenientFieldQuery;
 
 public class MultiMatchQuery extends MatchQuery {
 
@@ -71,6 +72,7 @@ public class MultiMatchQuery extends MatchQuery {
             case PHRASE_PREFIX:
             case BEST_FIELDS:
             case MOST_FIELDS:
+            case BOOL_PREFIX:
                 queries = buildFieldQueries(type, fieldNames, value, minimumShouldMatch);
                 break;
 
@@ -98,7 +100,6 @@ public class MultiMatchQuery extends MatchQuery {
                                           Object value, String minimumShouldMatch) throws IOException {
         List<Query> queries = new ArrayList<>();
         for (String fieldName : fieldNames.keySet()) {
-//默认
 //            if (context.fieldMapper(fieldName) == null) {
 //                // ignore unmapped fields
 //                continue;
@@ -137,9 +138,11 @@ public class MultiMatchQuery extends MatchQuery {
         for (Map.Entry<Analyzer, List<FieldAndBoost>> group : groups.entrySet()) {
             final MatchQueryBuilder builder;
             if (group.getValue().size() == 1) {
-                builder = new MatchQueryBuilder(group.getKey(), group.getValue().get(0).fieldType);
+                builder = new MatchQueryBuilder(group.getKey(), group.getValue().get(0).fieldType,
+                        enablePositionIncrements, autoGenerateSynonymsPhraseQuery);
             } else {
-                builder = new BlendedQueryBuilder(group.getKey(), group.getValue(), tieBreaker);
+                builder = new BlendedQueryBuilder(group.getKey(), group.getValue(), tieBreaker,
+                        enablePositionIncrements, autoGenerateSynonymsPhraseQuery);
             }
 
             /*
@@ -169,24 +172,38 @@ public class MultiMatchQuery extends MatchQuery {
         private final List<FieldAndBoost> blendedFields;
         private final float tieBreaker;
 
-        BlendedQueryBuilder(Analyzer analyzer, List<FieldAndBoost> blendedFields, float tieBreaker) {
-            super(analyzer, blendedFields.get(0).fieldType);
+        BlendedQueryBuilder(Analyzer analyzer, List<FieldAndBoost> blendedFields, float tieBreaker,
+                            boolean enablePositionIncrements, boolean autoGenerateSynonymsPhraseQuery) {
+            super(analyzer, blendedFields.get(0).fieldType, enablePositionIncrements, autoGenerateSynonymsPhraseQuery);
             this.blendedFields = blendedFields;
             this.tieBreaker = tieBreaker;
         }
 
         @Override
-        protected Query newSynonymQuery(Term[] terms) {
+        protected Query newSynonymQuery(TermAndBoost[] terms) {
             BytesRef[] values = new BytesRef[terms.length];
             for (int i = 0; i < terms.length; i++) {
-                values[i] = terms[i].bytes();
+                values[i] = terms[i].term.bytes();
             }
             return blendTerms(context, values, commonTermsCutoff, tieBreaker, lenient, blendedFields);
         }
 
         @Override
-        public Query newTermQuery(Term term) {
+        protected Query newTermQuery(Term term, float boost) {
             return blendTerm(context, term.bytes(), commonTermsCutoff, tieBreaker, lenient, blendedFields);
+        }
+
+        @Override
+        protected Query newPrefixQuery(Term term) {
+            List<Query> disjunctions = new ArrayList<>();
+            for (FieldAndBoost fieldType : blendedFields) {
+                Query query = fieldType.fieldType.prefixQuery(term.text(), null, context);
+                if (fieldType.boost != 1f) {
+                    query = new BoostQuery(query, fieldType.boost);
+                }
+                disjunctions.add(query);
+            }
+            return new DisjunctionMaxQuery(disjunctions, tieBreaker);
         }
 
         @Override
@@ -224,6 +241,7 @@ public class MultiMatchQuery extends MatchQuery {
 
     static Query blendTerms(QueryShardContext context, BytesRef[] values, Float commonTermsCutoff, float tieBreaker,
                             boolean lenient, List<FieldAndBoost> blendedFields) {
+
         List<Query> queries = new ArrayList<>();
         Term[] terms = new Term[blendedFields.size() * values.length];
         float[] blendedBoost = new float[blendedFields.size() * values.length];
@@ -233,23 +251,12 @@ public class MultiMatchQuery extends MatchQuery {
                 Query query;
                 try {
                     query = ft.fieldType.termQuery(term, context);
-                } catch (IllegalArgumentException e) {
-                    // the query expects a certain class of values such as numbers
-                    // of ip addresses and the value can't be parsed, so ignore this
-                    // field
-                    continue;
-                } catch (ElasticsearchParseException parseException) {
-                    // date fields throw an ElasticsearchParseException with the
-                    // underlying IAE as the root cause, ignore this field if that is
-                    // the case
-                    Throwable cause = parseException;
-                    while (cause.getCause() != null && cause.getCause() != cause) {
-                        cause = cause.getCause();
-                    };
-                    if (cause instanceof IllegalArgumentException) {
-                        continue;
+                } catch (RuntimeException e) {
+                    if (lenient) {
+                        query = newLenientFieldQuery(ft.fieldType.name(), e);
+                    } else {
+                        throw e;
                     }
-                    throw parseException;
                 }
                 float boost = ft.boost;
                 while (query instanceof BoostQuery) {

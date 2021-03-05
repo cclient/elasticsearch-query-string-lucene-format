@@ -1,10 +1,10 @@
-base on es 6.8.0
-
 this work's target is parse es query_string and use direct on pure lucene index
 
 then can use other bigdata technology and compatibility with es,reduce es's load
 
 ## Main features
+
+### for es 6.8.0
 
 * format es query_string to orginal lucene phrase
 * parse es query_string to lucene Query object
@@ -13,10 +13,14 @@ then can use other bigdata technology and compatibility with es,reduce es's load
 * use on pure lucene index
 * query_string/range/term/terms do well
 
+### for es 7.10.2
+
+* format es query_string to orginal lucene phrase
+* parse es query_string to lucene Query object
+
 ## Important
 
 don't supply all es Query features
-
 
 ## Other
 
