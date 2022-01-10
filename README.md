@@ -1,6 +1,6 @@
-this work's target is parse es query_string and use direct on pure lucene index
+this work's destination is parse elasticsearch query_string and use direct on pure lucene index
 
-then can use other bigdata technology and compatibility with es,reduce es's load
+then can use other OLAP/OLTP bigdata technology and compatibility with es,reduce es's load
 
 ## Main features
 
